@@ -1531,6 +1531,49 @@ void main() {
         expect(controller.value.isBuffering, isFalse);
         await tester.runAsync(controller.dispose);
       });
+
+      testWidgets('grows duration from buffering updates for DVR', (WidgetTester tester) async {
+        final controller = VideoPlayerController.networkUrl(_localhostUri);
+        await controller.initialize();
+        expect(controller.value.duration, const Duration(seconds: 1));
+        final StreamController<VideoEvent> fakeVideoEventStream =
+            fakeVideoPlayerPlatform.streams[controller.playerId]!;
+
+        // A live DVR window extends past the initially reported duration.
+        fakeVideoEventStream.add(
+          VideoEvent(
+            eventType: VideoEventType.bufferingUpdate,
+            buffered: <DurationRange>[DurationRange(Duration.zero, const Duration(seconds: 60))],
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(controller.value.duration, const Duration(seconds: 60));
+        expect(controller.value.buffered.length, 1);
+
+        // Seeking back within the window must not clamp to the old duration.
+        await controller.seekTo(const Duration(seconds: 30));
+        expect(controller.value.position, const Duration(seconds: 30));
+
+        // The live edge must not be treated as end-of-video.
+        await controller.seekTo(controller.value.duration);
+        expect(controller.value.isCompleted, isFalse);
+
+        // Playing from the live edge must not restart from zero.
+        await controller.play();
+        expect(controller.value.isPlaying, isTrue);
+        expect(controller.value.position, const Duration(seconds: 60));
+
+        // A smaller buffered range must not shrink the window.
+        fakeVideoEventStream.add(
+          VideoEvent(
+            eventType: VideoEventType.bufferingUpdate,
+            buffered: <DurationRange>[DurationRange(Duration.zero, const Duration(seconds: 40))],
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(controller.value.duration, const Duration(seconds: 60));
+        await tester.runAsync(controller.dispose);
+      });
     });
 
     test('updates position', () async {

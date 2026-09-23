@@ -554,6 +554,19 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
   StreamSubscription<dynamic>? _eventSubscription;
   _VideoAppLifeCycleObserver? _lifeCycleObserver;
 
+  /// Whether the reported duration has grown beyond its initialized value.
+  ///
+  /// This happens on live streams with a DVR window, where the platform keeps
+  /// extending the seekable range as the broadcast progresses. When true, the
+  /// controller must not treat "position == duration" as end-of-video
+  /// (completed / restart-from-zero), because that point is the live edge and
+  /// keeps moving forward.
+  bool _hasGrowingDuration = false;
+
+  /// Growth larger than this counts as a moving (live) window; smaller
+  /// differences are treated as platform rounding of the buffered range.
+  static const Duration _durationGrowthThreshold = Duration(milliseconds: 500);
+
   /// The id of a player that hasn't been initialized.
   @visibleForTesting
   static const int kUninitializedPlayerId = -1;
@@ -663,7 +676,22 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
           pause().then((void pauseResult) => seekTo(value.duration));
           value = value.copyWith(isCompleted: true);
         case platform_interface.VideoEventType.bufferingUpdate:
-          value = value.copyWith(buffered: event.buffered);
+          Duration bufferedEnd = Duration.zero;
+          for (final platform_interface.DurationRange range
+              in event.buffered ?? const <platform_interface.DurationRange>[]) {
+            if (range.end > bufferedEnd) {
+              bufferedEnd = range.end;
+            }
+          }
+          // Grow the duration to track the seekable range. On VOD the buffered
+          // range never exceeds the real duration (plus rounding), so this
+          // only takes effect on live streams with a DVR window.
+          if (bufferedEnd > value.duration + _durationGrowthThreshold) {
+            _hasGrowingDuration = true;
+            value = value.copyWith(buffered: event.buffered, duration: bufferedEnd);
+          } else {
+            value = value.copyWith(buffered: event.buffered);
+          }
         case platform_interface.VideoEventType.bufferingStart:
           value = value.copyWith(isBuffering: true);
         case platform_interface.VideoEventType.bufferingEnd:
@@ -726,7 +754,10 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
   /// has been sent to the platform, not when playback itself is totally
   /// finished.
   Future<void> play() async {
-    if (value.position == value.duration) {
+    // Only VOD restarts from the beginning when played from its end; on a
+    // live stream with a growing DVR window, position == duration is the
+    // live edge and must not rewind to zero.
+    if (!_hasGrowingDuration && value.position == value.duration) {
       await seekTo(Duration.zero);
     }
     value = value.copyWith(isPlaying: true);
@@ -987,7 +1018,9 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
     value = value.copyWith(
       position: position,
       caption: _getCaptionAt(position),
-      isCompleted: position == value.duration,
+      // Reaching duration is completion only for fixed-length videos; on a
+      // live DVR stream that point is the moving live edge.
+      isCompleted: !_hasGrowingDuration && position == value.duration,
     );
   }
 
