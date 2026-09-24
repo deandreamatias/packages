@@ -415,6 +415,10 @@ class _PlayerInstance {
         eventType: VideoEventType.isPlayingStateUpdate,
         isPlaying: map['isPlaying'] as bool,
       ),
+      'durationUpdate' => VideoEvent(
+        eventType: VideoEventType.durationUpdate,
+        duration: Duration(milliseconds: map['duration'] as int),
+      ),
       _ => VideoEvent(eventType: VideoEventType.unknown),
     });
   }

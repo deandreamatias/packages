@@ -322,7 +322,8 @@ class VideoEvent {
 
   /// Duration of the video.
   ///
-  /// Only used if [eventType] is [VideoEventType.initialized].
+  /// Only used if [eventType] is [VideoEventType.initialized] or
+  /// [VideoEventType.durationUpdate].
   final Duration? duration;
 
   /// Size of the video.
@@ -390,6 +391,13 @@ enum VideoEventType {
   /// This event is fired when the video starts or pauses due to user actions or
   /// phone calls, or other app media such as music players.
   isPlayingStateUpdate,
+
+  /// The duration of the video has changed.
+  ///
+  /// Emitted when the platform detects a new duration, e.g. when the seekable
+  /// window of a live DVR stream slides or grows. The new value is carried in
+  /// [VideoEvent.duration].
+  durationUpdate,
 
   /// An unknown event has been received.
   unknown,

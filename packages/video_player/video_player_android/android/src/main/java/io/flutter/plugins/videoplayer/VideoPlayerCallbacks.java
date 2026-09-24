@@ -19,6 +19,12 @@ import androidx.annotation.Nullable;
 public interface VideoPlayerCallbacks {
   void onInitialized(int width, int height, long durationInMs, int rotationCorrectionInDegrees);
 
+  /**
+   * Called when the player's duration changes, e.g. when the seekable window of a live DVR
+   * stream slides or grows.
+   */
+  void onDurationUpdate(long durationInMs);
+
   void onPlaybackStateChanged(@NonNull PlatformPlaybackState state);
 
   void onError(@NonNull String code, @Nullable String message, @Nullable Object details);

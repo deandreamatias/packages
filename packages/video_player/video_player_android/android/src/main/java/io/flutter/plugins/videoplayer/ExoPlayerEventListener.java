@@ -19,6 +19,7 @@ public abstract class ExoPlayerEventListener implements Player.Listener {
   static final long DURATION_UNSET_INITIALIZATION_TIMEOUT_MS = 2000;
   private boolean isInitialized = false;
   private boolean isWaitingForValidDuration = false;
+  private long lastSentDurationMs = C.TIME_UNSET;
   private final Handler mainHandler = new Handler(Looper.getMainLooper());
   private final Runnable initializationFallback =
       () -> {
@@ -96,6 +97,28 @@ public abstract class ExoPlayerEventListener implements Player.Listener {
     isInitialized = true;
     mainHandler.removeCallbacks(initializationFallback);
     sendInitialized();
+    // Seed from the same value sendInitialized reports so unchanged windows
+    // are not re-emitted immediately after initialization.
+    long duration = exoPlayer.getDuration();
+    lastSentDurationMs = duration != C.TIME_UNSET ? duration : lastSentDurationMs;
+    maybeSendDurationUpdate();
+  }
+
+  /**
+   * Emits a duration update when the seekable window has changed since the last emission. Live
+   * streams only report a duration once at initialization otherwise, which leaves the Dart-side
+   * duration (and progress bar) stale as the DVR window slides.
+   */
+  private void maybeSendDurationUpdate() {
+    if (!isInitialized) {
+      return;
+    }
+    long duration = exoPlayer.getDuration();
+    if (duration == C.TIME_UNSET || duration <= 0 || duration == lastSentDurationMs) {
+      return;
+    }
+    lastSentDurationMs = duration;
+    events.onDurationUpdate(duration);
   }
 
   @Override
@@ -108,6 +131,7 @@ public abstract class ExoPlayerEventListener implements Player.Listener {
       case Player.STATE_READY:
         platformState = PlatformPlaybackState.READY;
         maybeSendInitialized();
+        maybeSendDurationUpdate();
         break;
       case Player.STATE_ENDED:
         platformState = PlatformPlaybackState.ENDED;
@@ -124,6 +148,8 @@ public abstract class ExoPlayerEventListener implements Player.Listener {
     if (isWaitingForValidDuration && exoPlayer.getPlaybackState() == Player.STATE_READY) {
       maybeSendInitialized();
     }
+    // Timeline changes are how ExoPlayer reports a sliding live window.
+    maybeSendDurationUpdate();
   }
 
   @Override

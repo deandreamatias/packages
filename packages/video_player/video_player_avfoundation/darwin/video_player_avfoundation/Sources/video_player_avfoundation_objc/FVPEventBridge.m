@@ -99,6 +99,10 @@
   [self sendOrQueue:@{@"event" : @"bufferingUpdate", @"values" : regions}];
 }
 
+- (void)videoPlayerDidUpdateDuration:(int64_t)duration {
+  [self sendOrQueue:@{@"event" : @"durationUpdate", @"duration" : @(duration)}];
+}
+
 - (void)videoPlayerDidSetPlaying:(BOOL)playing {
   [self sendOrQueue:@{@"event" : @"isPlayingStateUpdate", @"isPlaying" : @(playing)}];
 }

@@ -626,6 +626,22 @@ void main() {
         );
       });
 
+      test('duration update', () async {
+        final Stream<VideoEvent> eventStream = mockPlayerEmitingEvents(<PlatformVideoEvent>[
+          DurationUpdateEvent(duration: 60000),
+        ]);
+
+        expect(
+          eventStream,
+          emitsInOrder(<dynamic>[
+            VideoEvent(
+              eventType: VideoEventType.durationUpdate,
+              duration: const Duration(milliseconds: 60000),
+            ),
+          ]),
+        );
+      });
+
       test('buffering start', () async {
         final Stream<VideoEvent> eventStream = mockPlayerEmitingEvents(<PlatformVideoEvent>[
           PlaybackStateChangeEvent(state: PlatformPlaybackState.buffering),

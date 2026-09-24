@@ -69,6 +69,13 @@ class VideoTrackChangedEvent extends PlatformVideoEvent {
   late final String? selectedTrackId;
 }
 
+/// Sent when the player's duration changes, e.g. when the seekable window of
+/// a live DVR stream slides or grows.
+class DurationUpdateEvent extends PlatformVideoEvent {
+  /// The video duration in milliseconds.
+  late final int duration;
+}
+
 /// Information passed to the platform view creation.
 class PlatformVideoViewCreationParams {
   const PlatformVideoViewCreationParams({required this.playerId});

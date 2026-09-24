@@ -593,6 +593,13 @@ class _PlayerInstance {
             event.selectedTrackId == _expectedVideoTrackId) {
           _videoTrackSelectionCompleter!.complete();
         }
+      case DurationUpdateEvent _:
+        _eventStreamController.add(
+          VideoEvent(
+            eventType: VideoEventType.durationUpdate,
+            duration: Duration(milliseconds: event.duration),
+          ),
+        );
     }
   }
 

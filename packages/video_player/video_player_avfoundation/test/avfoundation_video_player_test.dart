@@ -461,6 +461,16 @@ void main() {
                   (ByteData? data) {},
                 );
 
+            await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+                .handlePlatformMessage(
+                  mockChannel,
+                  const StandardMethodCodec().encodeSuccessEnvelope(<String, dynamic>{
+                    'event': 'durationUpdate',
+                    'duration': 60000,
+                  }),
+                  (ByteData? data) {},
+                );
+
             return const StandardMethodCodec().encodeSuccessEnvelope(null);
           } else if (methodCall.method == 'cancel') {
             return const StandardMethodCodec().encodeSuccessEnvelope(null);
@@ -492,6 +502,10 @@ void main() {
           VideoEvent(eventType: VideoEventType.bufferingEnd),
           VideoEvent(eventType: VideoEventType.isPlayingStateUpdate, isPlaying: true),
           VideoEvent(eventType: VideoEventType.isPlayingStateUpdate, isPlaying: false),
+          VideoEvent(
+            eventType: VideoEventType.durationUpdate,
+            duration: const Duration(milliseconds: 60000),
+          ),
         ]),
       );
     });

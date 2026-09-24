@@ -14,6 +14,7 @@ static void *timeRangeContext = &timeRangeContext;
 static void *statusContext = &statusContext;
 static void *playbackLikelyToKeepUpContext = &playbackLikelyToKeepUpContext;
 static void *rateContext = &rateContext;
+static void *seekableRangeContext = &seekableRangeContext;
 
 /// The key name for loading AVURLAsset variants property asynchronously.
 /// Note: Apple does not provide a constant for this key.
@@ -70,12 +71,23 @@ static NSDictionary<NSString *, NSValue *> *FVPGetPlayerItemObservations(void) {
     @"loadedTimeRanges" : [NSValue valueWithPointer:timeRangeContext],
     @"status" : [NSValue valueWithPointer:statusContext],
     @"playbackLikelyToKeepUp" : [NSValue valueWithPointer:playbackLikelyToKeepUpContext],
+    @"seekableRanges" : [NSValue valueWithPointer:seekableRangeContext],
   };
 }
 
 @implementation FVPVideoPlayer {
   // Whether or not player and player item listeners have ever been registered.
   BOOL _listenersRegistered;
+  // Start/duration of the seekable (DVR) window, when the item reports one.
+  // Positions and durations exposed to Dart are relative to this window so
+  // that live streams report the real seekable range instead of the asset's
+  // absolute (often indefinite) timeline.
+  CMTime _seekableWindowStart;
+  CMTime _seekableWindowDuration;
+  BOOL _hasSeekableWindow;
+  // Last duration (ms) sent to Dart via initialized/durationUpdate, to avoid
+  // re-emitting unchanged windows.
+  int64_t _lastSentDurationMs;
 }
 
 - (instancetype)initWithPlayerItem:(NSObject<FVPAVPlayerItem> *)item
@@ -305,12 +317,25 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
     NSMutableArray<NSArray<NSNumber *> *> *values = [[NSMutableArray alloc] init];
     for (NSValue *rangeValue in [object loadedTimeRanges]) {
       CMTimeRange range = [rangeValue CMTimeRangeValue];
+      if (_hasSeekableWindow) {
+        // Express buffered regions relative to the seekable window start so
+        // they match the window-relative position/duration exposed to Dart.
+        CMTimeRange window = CMTimeRangeMake(_seekableWindowStart, _seekableWindowDuration);
+        CMTimeRange clipped = CMTimeRangeGetIntersection(range, window);
+        if (!CMTIMERANGE_IS_VALID(clipped) || CMTIMERANGE_IS_EMPTY(clipped)) {
+          continue;
+        }
+        range = CMTimeRangeMake(CMTimeSubtract(clipped.start, _seekableWindowStart),
+                                clipped.duration);
+      }
       [values addObject:@[
         @(FVPCMTimeToMillis(range.start)),
         @(FVPCMTimeToMillis(range.duration)),
       ]];
     }
     [self.eventListener videoPlayerDidUpdateBufferRegions:values];
+  } else if (context == seekableRangeContext) {
+    [self updateSeekableWindowFromRanges:[object seekableRanges]];
   } else if (context == statusContext) {
     AVPlayerItem *item = (AVPlayerItem *)object;
     [self reportStatusForPlayerItem:item];
@@ -341,6 +366,9 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
     case AVPlayerItemStatusReadyToPlay:
       if (!_isInitialized) {
         [item addOutput:self.pixelBufferSource.videoOutput];
+        // Pick up any seekable window before the initialized event so live
+        // streams report the real window as their initial duration.
+        [self updateSeekableWindowFromRanges:item.seekableRanges];
         [self reportInitialized];
         [self updatePlayingState];
       }
@@ -423,7 +451,8 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
   NSAssert(!_isInitialized, @"reportInitializedIfReadyToPlay should only be called once.");
 
   _isInitialized = YES;
-  [self.eventListener videoPlayerDidInitializeWithDuration:self.duration
+  _lastSentDurationMs = self.duration;
+  [self.eventListener videoPlayerDidInitializeWithDuration:_lastSentDurationMs
                                                       size:currentItem.presentationSize];
 }
 
@@ -440,16 +469,25 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
 }
 
 - (nullable NSNumber *)position:(FlutterError *_Nullable *_Nonnull)error {
-  return @(FVPCMTimeToMillis([_player currentTime]));
+  CMTime current = [_player currentTime];
+  if (_hasSeekableWindow) {
+    CMTime relative = CMTimeSubtract(current, _seekableWindowStart);
+    if (CMTimeCompare(relative, kCMTimeZero) < 0) {
+      relative = kCMTimeZero;
+    }
+    return @(FVPCMTimeToMillis(relative));
+  }
+  return @(FVPCMTimeToMillis(current));
 }
 
 - (void)seekTo:(NSInteger)position completion:(void (^)(FlutterError *_Nullable))completion {
-  CMTime targetCMTime = CMTimeMake(position, 1000);
-  CMTimeValue duration = _player.currentItem.asset.duration.value;
-  // Without adding tolerance when seeking to duration,
+  CMTime base = _hasSeekableWindow ? _seekableWindowStart : kCMTimeZero;
+  CMTime targetCMTime = CMTimeAdd(base, CMTimeMake(position, 1000));
+  int64_t windowEnd = self.duration;
+  // Without adding tolerance when seeking to the end of the seekable window,
   // seekToTime will never complete, and this call will hang.
   // see issue https://github.com/flutter/flutter/issues/124475.
-  CMTime tolerance = position == duration ? CMTimeMake(1, 1000) : kCMTimeZero;
+  CMTime tolerance = (windowEnd > 0 && position >= windowEnd) ? CMTimeMake(1, 1000) : kCMTimeZero;
   [_player seekToTime:targetCMTime
         toleranceBefore:tolerance
          toleranceAfter:tolerance
@@ -685,10 +723,54 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
 #pragma mark - Private
 
 - (int64_t)duration {
+  // Prefer the seekable (DVR) window: on live streams the asset duration can
+  // be indefinite or an absolute timeline unrelated to the seekable range.
+  if (_hasSeekableWindow) {
+    int64_t windowDuration = FVPCMTimeToMillis(_seekableWindowDuration);
+    if (windowDuration > 0) {
+      return windowDuration;
+    }
+  }
   // Note: https://openradar.appspot.com/radar?id=4968600712511488
   // `[AVPlayerItem duration]` can be `kCMTimeIndefinite`,
   // use `[[AVPlayerItem asset] duration]` instead.
   return FVPCMTimeToMillis([[[_player currentItem] asset] duration]);
+}
+
+/// Records the largest seekable range as the DVR window and notifies Dart if
+/// the effective duration changed. A no-op before initialization (the initial
+/// value is reported by [reportInitialized]).
+- (void)updateSeekableWindowFromRanges:(NSArray<NSValue *> *)ranges {
+  CMTimeRange window = kCMTimeRangeInvalid;
+  for (NSValue *rangeValue in ranges) {
+    CMTimeRange candidate = [rangeValue CMTimeRangeValue];
+    if (!CMTIMERANGE_IS_VALID(candidate) || CMTIMERANGE_IS_EMPTY(candidate)) {
+      continue;
+    }
+    if (!CMTIMERANGE_IS_VALID(window) ||
+        CMTimeCompare(CMTimeRangeGetEnd(candidate), CMTimeRangeGetEnd(window)) > 0) {
+      window = candidate;
+    }
+  }
+
+  if (CMTIMERANGE_IS_VALID(window) && !CMTIMERANGE_IS_EMPTY(window)) {
+    _hasSeekableWindow = YES;
+    _seekableWindowStart = window.start;
+    _seekableWindowDuration = window.duration;
+  } else {
+    _hasSeekableWindow = NO;
+    _seekableWindowStart = kCMTimeZero;
+    _seekableWindowDuration = kCMTimeZero;
+  }
+
+  if (!_isInitialized) {
+    return;
+  }
+  int64_t newDuration = self.duration;
+  if (newDuration > 0 && newDuration != _lastSentDurationMs) {
+    _lastSentDurationMs = newDuration;
+    [self.eventListener videoPlayerDidUpdateDuration:newDuration];
+  }
 }
 
 @end

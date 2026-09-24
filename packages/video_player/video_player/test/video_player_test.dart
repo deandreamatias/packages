@@ -1574,6 +1574,57 @@ void main() {
         expect(controller.value.duration, const Duration(seconds: 60));
         await tester.runAsync(controller.dispose);
       });
+
+      testWidgets('applies duration updates from the platform for DVR', (
+        WidgetTester tester,
+      ) async {
+        final controller = VideoPlayerController.networkUrl(_localhostUri);
+        await controller.initialize();
+        expect(controller.value.duration, const Duration(seconds: 1));
+        final StreamController<VideoEvent> fakeVideoEventStream =
+            fakeVideoPlayerPlatform.streams[controller.playerId]!;
+
+        // The platform reports the real seekable window of a live DVR stream.
+        fakeVideoEventStream.add(
+          VideoEvent(
+            eventType: VideoEventType.durationUpdate,
+            duration: const Duration(seconds: 45),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(controller.value.duration, const Duration(seconds: 45));
+
+        // Seeking back within the window must not clamp to the old duration.
+        await controller.seekTo(const Duration(seconds: 10));
+        expect(controller.value.position, const Duration(seconds: 10));
+
+        // The live edge must not be treated as end-of-video.
+        await controller.seekTo(controller.value.duration);
+        expect(controller.value.isCompleted, isFalse);
+
+        // Playing from the live edge must not restart from zero.
+        await controller.play();
+        expect(controller.value.isPlaying, isTrue);
+        expect(controller.value.position, const Duration(seconds: 45));
+
+        // The window slides: a later update may report a different duration.
+        fakeVideoEventStream.add(
+          VideoEvent(
+            eventType: VideoEventType.durationUpdate,
+            duration: const Duration(seconds: 30),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(controller.value.duration, const Duration(seconds: 30));
+
+        // Invalid updates are ignored.
+        fakeVideoEventStream.add(
+          VideoEvent(eventType: VideoEventType.durationUpdate, duration: Duration.zero),
+        );
+        await tester.pumpAndSettle();
+        expect(controller.value.duration, const Duration(seconds: 30));
+        await tester.runAsync(controller.dispose);
+      });
     });
 
     test('updates position', () async {

@@ -702,6 +702,15 @@ class VideoPlayerController extends ValueNotifier<VideoPlayerValue> {
           } else {
             value = value.copyWith(isPlaying: event.isPlaying);
           }
+        case platform_interface.VideoEventType.durationUpdate:
+          // Authoritative window duration from the platform (live DVR). Unlike
+          // the bufferingUpdate growth heuristic this may shrink, since the
+          // seekable window of a live stream slides.
+          final Duration? updatedDuration = event.duration;
+          if (updatedDuration != null && updatedDuration > Duration.zero) {
+            _hasGrowingDuration = true;
+            value = value.copyWith(duration: updatedDuration);
+          }
         case platform_interface.VideoEventType.unknown:
           break;
       }

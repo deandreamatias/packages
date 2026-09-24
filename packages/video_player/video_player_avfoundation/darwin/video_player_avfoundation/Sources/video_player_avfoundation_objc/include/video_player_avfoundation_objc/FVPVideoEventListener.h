@@ -27,6 +27,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// The array elements are two-element arrays, each containing the start and duration, in
 /// milliseconds, of a buffered region.
 - (void)videoPlayerDidUpdateBufferRegions:(NSArray<NSArray<NSNumber *> *> *)regions;
+/// Called when the effective (seekable window) duration changes, e.g. when a live DVR window
+/// slides or grows.
+- (void)videoPlayerDidUpdateDuration:(int64_t)duration;
 /// Called when the player starts or stops playing.
 - (void)videoPlayerDidSetPlaying:(BOOL)playing;
 /// Called when the video player has been disposed on the Dart side.
