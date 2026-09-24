@@ -461,6 +461,9 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
 - (void)playWithError:(FlutterError *_Nullable *_Nonnull)error {
   _isPlaying = YES;
   [self updatePlayingState];
+  // A discontinuity may have left the playhead outside the window while
+  // paused; recover as soon as playback resumes.
+  [self snapPlayheadIntoWindowIfOutside];
 }
 
 - (void)pauseWithError:(FlutterError *_Nullable *_Nonnull)error {
@@ -763,6 +766,9 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
     _seekableWindowDuration = kCMTimeZero;
   }
 
+  // iOS counterpart of ExoPlayer's ERROR_CODE_BEHIND_LIVE_WINDOW handling.
+  [self snapPlayheadIntoWindowIfOutside];
+
   if (!_isInitialized) {
     return;
   }
@@ -770,6 +776,33 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
   if (newDuration > 0 && newDuration != _lastSentDurationMs) {
     _lastSentDurationMs = newDuration;
     [self.eventListener videoPlayerDidUpdateDuration:newDuration];
+  }
+}
+
+// iOS counterpart of ExoPlayer's ERROR_CODE_BEHIND_LIVE_WINDOW handling:
+// while playing, a stall/discontinuity can leave the playhead outside the
+// seekable window (behind the start after expired segments, or ahead of the
+// end when the playlist timeline jumps backward). Snap back to the live edge
+// so position stays window-relative instead of clamping forever. No-op when
+// paused (a user scrub behind the window must hold) or before init.
+- (void)snapPlayheadIntoWindowIfOutside {
+  if (!_isPlaying || !_hasSeekableWindow) {
+    return;
+  }
+  CMTime now = [_player currentTime];
+  CMTime liveEdge = CMTimeAdd(_seekableWindowStart, _seekableWindowDuration);
+  // Playhead routinely rides ~1s past window end between KVO updates; only
+  // treat clearly-past as broken.
+  CMTime aheadLimit = CMTimeAdd(liveEdge, CMTimeMake(3, 1));
+  BOOL behind = CMTimeCompare(now, _seekableWindowStart) < 0;
+  BOOL ahead = CMTimeCompare(now, aheadLimit) > 0;
+  if (behind || ahead) {
+    // 1ms tolerance mirrors seekTo: seeking exactly to the window end
+    // otherwise never completes (flutter/flutter#124475).
+    [_player seekToTime:liveEdge
+          toleranceBefore:CMTimeMake(1, 1000)
+           toleranceAfter:CMTimeMake(1, 1000)
+        completionHandler:nil];
   }
 }
 
