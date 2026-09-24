@@ -71,7 +71,7 @@ static NSDictionary<NSString *, NSValue *> *FVPGetPlayerItemObservations(void) {
     @"loadedTimeRanges" : [NSValue valueWithPointer:timeRangeContext],
     @"status" : [NSValue valueWithPointer:statusContext],
     @"playbackLikelyToKeepUp" : [NSValue valueWithPointer:playbackLikelyToKeepUpContext],
-    @"seekableRanges" : [NSValue valueWithPointer:seekableRangeContext],
+    @"seekableTimeRanges" : [NSValue valueWithPointer:seekableRangeContext],
   };
 }
 
@@ -335,7 +335,7 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
     }
     [self.eventListener videoPlayerDidUpdateBufferRegions:values];
   } else if (context == seekableRangeContext) {
-    [self updateSeekableWindowFromRanges:[object seekableRanges]];
+    [self updateSeekableWindowFromRanges:[object seekableTimeRanges]];
   } else if (context == statusContext) {
     AVPlayerItem *item = (AVPlayerItem *)object;
     [self reportStatusForPlayerItem:item];
@@ -368,7 +368,7 @@ NS_INLINE CGFloat radiansToDegrees(CGFloat radians) {
         [item addOutput:self.pixelBufferSource.videoOutput];
         // Pick up any seekable window before the initialized event so live
         // streams report the real window as their initial duration.
-        [self updateSeekableWindowFromRanges:item.seekableRanges];
+        [self updateSeekableWindowFromRanges:item.seekableTimeRanges];
         [self reportInitialized];
         [self updatePlayingState];
       }
